@@ -1,0 +1,192 @@
+version: '3.8'
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: flashlearn-sqlserver
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=YourStrong@Passw0rd
+      - MSSQL_PID=Express
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    networks:
+      - flashlearn-network
+    healthcheck:
+      test: /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "YourStrong@Passw0rd" -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: flashlearn-rabbitmq
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - flashlearn-network
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  identity-api:
+    image: flashlearn/identity-api:${TAG:-latest}
+    container_name: flashlearn-identity-api
+    build:
+      context: .
+      dockerfile: src/Services/Identity/FLC.Identity.API/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+    ports:
+      - "5001:80"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    networks:
+      - flashlearn-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  decks-api:
+    image: flashlearn/decks-api:${TAG:-latest}
+    container_name: flashlearn-decks-api
+    build:
+      context: .
+      dockerfile: src/Services/Decks/FLC.Decks.API/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+    ports:
+      - "5002:80"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      identity-api:
+        condition: service_healthy
+    networks:
+      - flashlearn-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  flashcards-api:
+    image: flashlearn/flashcards-api:${TAG:-latest}
+    container_name: flashlearn-flashcards-api
+    build:
+      context: .
+      dockerfile: src/Services/FlashCards/FLC.FlashCards.API/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+    ports:
+      - "5003:80"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      identity-api:
+        condition: service_healthy
+    networks:
+      - flashlearn-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  categories-api:
+    image: flashlearn/categories-api:${TAG:-latest}
+    container_name: flashlearn-categories-api
+    build:
+      context: .
+      dockerfile: src/Services/Categories/FLC.Categories.API/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+    ports:
+      - "5004:80"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    networks:
+      - flashlearn-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  api-gateway:
+    image: flashlearn/api-gateway:${TAG:-latest}
+    container_name: flashlearn-api-gateway
+    build:
+      context: .
+      dockerfile: src/ApiGateway/FLC.Gateway/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+    ports:
+      - "5000:80"
+    depends_on:
+      identity-api:
+        condition: service_healthy
+      decks-api:
+        condition: service_healthy
+      flashcards-api:
+        condition: service_healthy
+      categories-api:
+        condition: service_healthy
+    networks:
+      - flashlearn-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  angular-app:
+    image: flashlearn/angular-app:${TAG:-latest}
+    container_name: flashlearn-angular-app
+    build:
+      context: ./src/Web/FLC.FlashLearn.Web
+      dockerfile: Dockerfile
+    ports:
+      - "4200:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - flashlearn-network
+    environment:
+      - API_URL=http://api-gateway:80
+
+volumes:
+  sqlserver-data:
+    driver: local
+  rabbitmq-data:
+    driver: local
+
+networks:
+  flashlearn-network:
+    driver: bridge
+    name: flashlearn-network
